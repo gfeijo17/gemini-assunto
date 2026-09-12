@@ -2,19 +2,19 @@ import os
 import datetime
 import streamlit as st
 import requests
-from google import genai
+import google.generativeai as genai
 
 st.set_page_config(page_title="Pesquisador Gemini Notebook", page_icon="🔍", layout="wide")
 
-st.title("🔍 Pesquisador de Assuntos Recentes & Gemini Notebook")
-st.markdown("Busque informações das últimas 36 horas, selecione as fontes e envie diretamente para o Gemini Notebook para processamento.")
+st.title("🔍 Pesquisador de Assuntos Recentes & Gemini")
+st.markdown("Busque informações das últimas 36 horas, selecione as fontes e envie para análise do Gemini.")
 
 # --- BARRA LATERAL: Configuração de Chaves de API ---
 with st.sidebar:
     st.header("🔑 Configurações de API")
-    gemini_api_key = st.text_input("Gemini API Key", type="password", value=os.environ.get("GEMINI_API_KEY", ""))
+    gemini_api_key = st.text_input("Gemini API Key", type="password", value=st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", "")))
     serper_api_key = st.text_input("Serper / News API Key", type="password", help="Usado para buscar notícias recentes nas últimas 36 horas")
-    st.info("As chaves podem ser inseridas aqui para autenticar com sua conta do Gemini e com a busca.")
+    st.info("Insira sua Gemini API Key para executar as análises.")
 
 # --- 1. ENTRADA DO USUÁRIO ---
 termo_busca = st.text_input("O que você deseja pesquisar?", placeholder="Ex: eleições 2026, tecnologia...")
@@ -52,7 +52,7 @@ if st.button("Buscar conteúdos (Últimas 36h)", type="primary"):
 # --- 3. SELEÇÃO COM CHECKBOXES (FLAGS) ---
 if 'resultados' in st.session_state and st.session_state['resultados']:
     st.subheader(f"Resultados encontrados para: '{st.session_state['termo_pesquisado']}'")
-    st.write("Marque as fontes e produções documentais que deseja enviar para o Gemini Notebook:")
+    st.write("Marque as fontes e produções documentais que deseja analisar:")
 
     fontes_selecionadas = []
     
@@ -68,8 +68,8 @@ if 'resultados' in st.session_state and st.session_state['resultados']:
         if marcado:
             fontes_selecionadas.append(item)
 
-    # --- 4. CONEXÃO COM O GEMINI NOTEBOOK & AÇÕES ---
-    st.subheader("🚀 Ações no Gemini Notebook")
+    # --- 4. CONEXÃO COM O GEMINI & PROCESSAMENTO ---
+    st.subheader("🚀 Processamento e Análise no Gemini")
     
     if fontes_selecionadas:
         st.success(f"{len(fontes_selecionadas)} fonte(s) selecionada(s).")
@@ -90,43 +90,44 @@ if 'resultados' in st.session_state and st.session_state['resultados']:
         with col_acao2:
             st.write(" ")
             st.write(" ")
-            enviar_notebook = st.button("Criar Caderno e Processar", type="primary")
+            enviar_notebook = st.button("Analisar com o Gemini", type="primary")
 
         if enviar_notebook:
             if not gemini_api_key:
                 st.error("Informe a Gemini API Key na barra lateral para continuar.")
             else:
-                with st.spinner("Conectando ao Gemini Notebook, anexando fontes e gerando o relatório..."):
+                with st.spinner("Sintetizando fontes e gerando o relatório..."):
                     try:
-                        client = genai.Client(api_key=gemini_api_key)
+                        # Configura a chave de API
+                        genai.configure(api_key=gemini_api_key)
                         
-                        nome_caderno = f"Pesquisa: {st.session_state['termo_pesquisado']} ({datetime.date.today().strftime('%d/%m/%Y')})"
-                        notebook = client.notebooks.create(
-                            notebook={"displayName": nome_caderno}
-                        )
-                        st.info(f"Caderno criado no Gemini Notebook: **{nome_caderno}**")
+                        # Concatena as fontes selecionadas como contexto
+                        contexto_fontes = "\n\n".join([
+                            f"Título: {f['title']}\nFonte: {f['source']}\nLink: {f['link']}\nTrecho: {f['snippet']}"
+                            for f in fontes_selecionadas
+                        ])
                         
-                        for fonte in fontes_selecionadas:
-                            client.notebooks.create_source(
-                                parent=notebook.name,
-                                source={
-                                    "displayName": fonte['title'],
-                                    "webContent": {"url": fonte['link']}
-                                }
-                            )
+                        prompt_sistema = f"""
+                        Você é um assistente de pesquisa especializado.
+                        Analise as seguintes fontes sobre '{st.session_state['termo_pesquisado']}' coletadas nas últimas 36 horas:
+
+                        --- FONTES COLETADAS ---
+                        {contexto_fontes}
+                        --- FIM DAS FONTES ---
+
+                        Elabore uma resposta estruturada seguindo o formato: {modelo_consumo}.
+                        Sempre cite as fontes/links fornecidos quando mencionar informações específicas.
+                        """
                         
-                        prompt_consulta = f"Com base em todas as fontes anexadas neste caderno sobre {st.session_state['termo_pesquisado']}, elabore o seguinte formato de consumo: {modelo_consumo}."
-                        
-                        resposta = client.notebooks.retrieve_relevant_chunks(
-                            name=notebook.name,
-                            query=prompt_consulta
-                        )
+                        # Chama o modelo Gemini 1.5 Flash
+                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        response = model.generate_content(prompt_sistema)
                         
                         st.balloons()
                         st.subheader(f"📑 Resultado: {modelo_consumo}")
-                        st.markdown(resposta)
+                        st.markdown(response.text)
                         
                     except Exception as e:
                         st.error(f"Ocorreu um erro ao processar com a API do Gemini: {e}")
     else:
-        st.warning("Selecione pelo menos uma fonte para enviar ao Gemini Notebook.")
+        st.warning("Selecione pelo menos uma fonte para continuar.")
